@@ -25,6 +25,30 @@ function isRegistered(req, res, next) {
   res.status(403).json({ error: 'User not registered' });
 }
 
+// Validate codename format and length
+function validateCodename(codename) {
+  if (!codename || typeof codename !== 'string') {
+    return { valid: false, error: 'Codename is required' };
+  }
+
+  // Trim and check length (3-30 characters)
+  const trimmed = codename.trim();
+  if (trimmed.length < 3) {
+    return { valid: false, error: 'Codename must be at least 3 characters' };
+  }
+  if (trimmed.length > 30) {
+    return { valid: false, error: 'Codename must be 30 characters or less' };
+  }
+
+  // Only allow alphanumeric, underscores, and hyphens
+  const codenameRegex = /^[a-zA-Z0-9_-]+$/;
+  if (!codenameRegex.test(trimmed)) {
+    return { valid: false, error: 'Codename can only contain letters, numbers, underscores, and hyphens' };
+  }
+
+  return { valid: true, codename: trimmed };
+}
+
 // Register a new user (complete registration after Google OAuth)
 router.post('/register', isAuthenticated, (req, res) => {
   if (req.user.type === 'existing') {
@@ -45,8 +69,15 @@ router.post('/register', isAuthenticated, (req, res) => {
     return res.status(400).json({ error: 'Invalid phone number format' });
   }
 
+  // Validate codename format
+  const codenameValidation = validateCodename(codename);
+  if (!codenameValidation.valid) {
+    return res.status(400).json({ error: codenameValidation.error });
+  }
+  const validatedCodename = codenameValidation.codename;
+
   // Check if codename is available
-  if (!isCodenameAvailable(codename)) {
+  if (!isCodenameAvailable(validatedCodename)) {
     return res.status(400).json({ error: 'Codename is already taken' });
   }
 
@@ -57,7 +88,7 @@ router.post('/register', isAuthenticated, (req, res) => {
       firstName: googleData.firstName,
       lastName: googleData.lastName,
       phoneNumber: phoneNumber.replace(/[\s\-\(\)]/g, ''),
-      codename
+      codename: validatedCodename
     });
 
     // Update session to reflect registered user
@@ -110,8 +141,15 @@ router.get('/phonebook', isAuthenticated, isRegistered, (req, res) => {
 // Check if codename is available
 router.get('/check-codename/:codename', isAuthenticated, (req, res) => {
   const { codename } = req.params;
+
+  // Validate codename format first
+  const codenameValidation = validateCodename(codename);
+  if (!codenameValidation.valid) {
+    return res.json({ available: false, error: codenameValidation.error });
+  }
+
   const excludeUserId = req.user.type === 'existing' ? req.user.user.id : null;
-  const available = isCodenameAvailable(codename, excludeUserId);
+  const available = isCodenameAvailable(codenameValidation.codename, excludeUserId);
   res.json({ available });
 });
 
@@ -131,20 +169,27 @@ router.put('/profile', isAuthenticated, isRegistered, (req, res) => {
     return res.status(400).json({ error: 'Invalid phone number format' });
   }
 
+  // Validate codename format
+  const codenameValidation = validateCodename(codename);
+  if (!codenameValidation.valid) {
+    return res.status(400).json({ error: codenameValidation.error });
+  }
+  const validatedCodename = codenameValidation.codename;
+
   // Check if codename is available (excluding current user)
-  if (!isCodenameAvailable(codename, userId)) {
+  if (!isCodenameAvailable(validatedCodename, userId)) {
     return res.status(400).json({ error: 'Codename is already taken' });
   }
 
   try {
     updateUser(userId, {
       phoneNumber: phoneNumber.replace(/[\s\-\(\)]/g, ''),
-      codename
+      codename: validatedCodename
     });
 
     // Update session
     req.user.user.phone_number = phoneNumber.replace(/[\s\-\(\)]/g, '');
-    req.user.user.codename = codename;
+    req.user.user.codename = validatedCodename;
 
     res.json({
       success: true,

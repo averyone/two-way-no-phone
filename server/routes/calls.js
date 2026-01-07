@@ -1,4 +1,5 @@
 const express = require('express');
+const twilio = require('twilio');
 const { getUserById, createCallLog, updateCallLog, getCallLogById } = require('../db/database');
 const { initiateBridgedCall, generateConferenceTwiML } = require('../services/twilio');
 
@@ -12,8 +13,47 @@ function isRegistered(req, res, next) {
   res.status(401).json({ error: 'Not authenticated or not registered' });
 }
 
-// Initiate a call to another user
-router.post('/initiate/:calleeId', isRegistered, async (req, res) => {
+// Middleware to validate Twilio webhook signatures
+function validateTwilioRequest(req, res, next) {
+  // Skip validation if Twilio credentials aren't configured (dev mode)
+  if (!process.env.TWILIO_AUTH_TOKEN) {
+    console.warn('WARNING: Twilio auth token not set, skipping webhook validation');
+    return next();
+  }
+
+  const twilioSignature = req.headers['x-twilio-signature'];
+  if (!twilioSignature) {
+    console.error('Missing Twilio signature header');
+    return res.status(403).send('Forbidden: Missing signature');
+  }
+
+  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+  const url = `${baseUrl}${req.originalUrl.split('?')[0]}`; // Remove query params for signature
+
+  const isValid = twilio.validateRequest(
+    process.env.TWILIO_AUTH_TOKEN,
+    twilioSignature,
+    url,
+    req.body || {}
+  );
+
+  if (!isValid) {
+    console.error('Invalid Twilio signature for request:', req.originalUrl);
+    return res.status(403).send('Forbidden: Invalid signature');
+  }
+
+  next();
+}
+
+// Initiate a call to another user (with rate limiting)
+router.post('/initiate/:calleeId', (req, res, next) => {
+  // Apply call-specific rate limiter
+  const callLimiter = req.app.get('callLimiter');
+  if (callLimiter) {
+    return callLimiter(req, res, next);
+  }
+  next();
+}, isRegistered, async (req, res) => {
   const callerId = req.user.user.id;
   const calleeId = parseInt(req.params.calleeId, 10);
 
@@ -66,7 +106,7 @@ router.post('/initiate/:calleeId', isRegistered, async (req, res) => {
 });
 
 // TwiML endpoint for conference (called by Twilio)
-router.all('/twiml/conference', (req, res) => {
+router.all('/twiml/conference', validateTwilioRequest, (req, res) => {
   const conferenceName = req.query.name || req.body.name;
   const participant = req.query.participant || req.body.participant;
 
@@ -79,12 +119,13 @@ router.all('/twiml/conference', (req, res) => {
   res.send(twiml);
 });
 
-// Status callback from Twilio
-router.post('/status/:callLogId', (req, res) => {
+// Status callback from Twilio (POST from Twilio webhooks)
+router.post('/status/:callLogId', validateTwilioRequest, (req, res) => {
   const { callLogId } = req.params;
   const { CallStatus, CallSid } = req.body;
 
-  console.log(`Call ${callLogId} status update: ${CallStatus} (SID: ${CallSid})`);
+  // Log without sensitive data
+  console.log(`Call ${callLogId} status update: ${CallStatus}`);
 
   try {
     const callLog = getCallLogById(parseInt(callLogId, 10));
