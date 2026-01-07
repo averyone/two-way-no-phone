@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: two-way-no-phone
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: CLIENT_URL
+        value: https://two-way-no-phone.onrender.com
+      - key: BASE_URL
+        value: https://two-way-no-phone.onrender.com
+      - key: GOOGLE_CALLBACK_URL
+        value: https://two-way-no-phone.onrender.com/auth/google/callback
