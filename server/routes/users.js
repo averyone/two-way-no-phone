@@ -3,6 +3,7 @@ const {
   createUser,
   getAllUsersExcept,
   updateUser,
+  updateUserAnswerInApp,
   isCodenameAvailable,
   getUserByGoogleId
 } = require('../db/database-pg');
@@ -110,7 +111,8 @@ router.post('/register', isAuthenticated, async (req, res) => {
           firstName: user.first_name,
           lastName: user.last_name,
           phoneNumber: user.phone_number,
-          codename: user.codename
+          codename: user.codename,
+          answerInApp: user.answer_in_app
         }
       });
     });
@@ -201,12 +203,38 @@ router.put('/profile', isAuthenticated, isRegistered, async (req, res) => {
         firstName: req.user.user.first_name,
         lastName: req.user.user.last_name,
         phoneNumber: req.user.user.phone_number,
-        codename: req.user.user.codename
+        codename: req.user.user.codename,
+        answerInApp: req.user.user.answer_in_app
       }
     });
   } catch (error) {
     console.error('Profile update error:', error);
     res.status(500).json({ error: 'Profile update failed' });
+  }
+});
+
+// Toggle answer in app preference
+router.put('/answer-in-app', isAuthenticated, isRegistered, async (req, res) => {
+  const { answerInApp } = req.body;
+  const userId = req.user.user.id;
+
+  if (typeof answerInApp !== 'boolean') {
+    return res.status(400).json({ error: 'answerInApp must be a boolean' });
+  }
+
+  try {
+    const updatedUser = await updateUserAnswerInApp(userId, answerInApp);
+
+    // Update session
+    req.user.user.answer_in_app = answerInApp;
+
+    res.json({
+      success: true,
+      answerInApp: updatedUser.answer_in_app
+    });
+  } catch (error) {
+    console.error('Answer in app update error:', error);
+    res.status(500).json({ error: 'Failed to update preference' });
   }
 });
 

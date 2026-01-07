@@ -1,4 +1,6 @@
 const twilio = require('twilio');
+const AccessToken = twilio.jwt.AccessToken;
+const VoiceGrant = AccessToken.VoiceGrant;
 
 let twilioClient = null;
 
@@ -17,20 +19,46 @@ function getTwilioClient() {
 }
 
 /**
- * Initiates a bridged call between two phone numbers using Twilio Conference
+ * Generate an access token for Twilio Voice in the browser
+ * @param {string} identity - Unique identity for this user (e.g., "user_123")
+ * @returns {string} - JWT access token
+ */
+function generateAccessToken(identity) {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const apiKey = process.env.TWILIO_API_KEY;
+  const apiSecret = process.env.TWILIO_API_SECRET;
+  const twimlAppSid = process.env.TWILIO_TWIML_APP_SID;
+
+  if (!accountSid || !apiKey || !apiSecret) {
+    throw new Error('Twilio API credentials not configured');
+  }
+
+  const accessToken = new AccessToken(accountSid, apiKey, apiSecret, {
+    identity: identity,
+    ttl: 3600 // Token valid for 1 hour
+  });
+
+  // Create a Voice grant for this token
+  const voiceGrant = new VoiceGrant({
+    outgoingApplicationSid: twimlAppSid,
+    incomingAllow: true // Allow incoming calls to this identity
+  });
+
+  accessToken.addGrant(voiceGrant);
+
+  return accessToken.toJwt();
+}
+
+/**
+ * Initiates a bridged call between two parties using Twilio Conference
+ * Supports both phone and browser (WebRTC) endpoints
  *
- * The flow is:
- * 1. Create a unique conference room
- * 2. Call the first participant (caller) and connect them to the conference
- * 3. Call the second participant (callee) and connect them to the conference
- * 4. Both parties are now connected and can talk to each other
- *
- * @param {string} callerPhone - Phone number of the person initiating the call
- * @param {string} calleePhone - Phone number of the person being called
+ * @param {object} caller - { phone, identity, answerInApp } for the caller
+ * @param {object} callee - { phone, identity, answerInApp } for the callee
  * @param {string} callLogId - ID of the call log for tracking
  * @returns {Promise<object>} - Conference details
  */
-async function initiateBridgedCall(callerPhone, calleePhone, callLogId) {
+async function initiateBridgedCall(caller, callee, callLogId) {
   const client = getTwilioClient();
   const twilioNumber = process.env.TWILIO_PHONE_NUMBER;
 
@@ -44,25 +72,55 @@ async function initiateBridgedCall(callerPhone, calleePhone, callLogId) {
   // TwiML for joining the conference
   const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
 
-  // First, call the caller and connect them to the conference
-  const callerCall = await client.calls.create({
-    to: callerPhone,
-    from: twilioNumber,
-    url: `${baseUrl}/api/calls/twiml/conference?name=${encodeURIComponent(conferenceName)}&participant=caller`,
-    statusCallback: `${baseUrl}/api/calls/status/${callLogId}`,
-    statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-    statusCallbackMethod: 'POST'
-  });
+  const callPromises = [];
 
-  // Then, call the callee and connect them to the same conference
-  const calleeCall = await client.calls.create({
-    to: calleePhone,
-    from: twilioNumber,
-    url: `${baseUrl}/api/calls/twiml/conference?name=${encodeURIComponent(conferenceName)}&participant=callee`,
-    statusCallback: `${baseUrl}/api/calls/status/${callLogId}`,
-    statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-    statusCallbackMethod: 'POST'
-  });
+  // Call the caller - if they're in-app, call their browser identity, otherwise their phone
+  if (caller.answerInApp && caller.identity) {
+    // Call browser client
+    callPromises.push(client.calls.create({
+      to: `client:${caller.identity}`,
+      from: twilioNumber,
+      url: `${baseUrl}/api/calls/twiml/conference?name=${encodeURIComponent(conferenceName)}&participant=caller`,
+      statusCallback: `${baseUrl}/api/calls/status/${callLogId}`,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      statusCallbackMethod: 'POST'
+    }));
+  } else {
+    // Call phone number
+    callPromises.push(client.calls.create({
+      to: caller.phone,
+      from: twilioNumber,
+      url: `${baseUrl}/api/calls/twiml/conference?name=${encodeURIComponent(conferenceName)}&participant=caller`,
+      statusCallback: `${baseUrl}/api/calls/status/${callLogId}`,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      statusCallbackMethod: 'POST'
+    }));
+  }
+
+  // Call the callee - if they're in-app, call their browser identity, otherwise their phone
+  if (callee.answerInApp && callee.identity) {
+    // Call browser client
+    callPromises.push(client.calls.create({
+      to: `client:${callee.identity}`,
+      from: twilioNumber,
+      url: `${baseUrl}/api/calls/twiml/conference?name=${encodeURIComponent(conferenceName)}&participant=callee`,
+      statusCallback: `${baseUrl}/api/calls/status/${callLogId}`,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      statusCallbackMethod: 'POST'
+    }));
+  } else {
+    // Call phone number
+    callPromises.push(client.calls.create({
+      to: callee.phone,
+      from: twilioNumber,
+      url: `${baseUrl}/api/calls/twiml/conference?name=${encodeURIComponent(conferenceName)}&participant=callee`,
+      statusCallback: `${baseUrl}/api/calls/status/${callLogId}`,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      statusCallbackMethod: 'POST'
+    }));
+  }
+
+  const [callerCall, calleeCall] = await Promise.all(callPromises);
 
   return {
     conferenceName,
@@ -112,6 +170,7 @@ async function endCall(callSid) {
 
 module.exports = {
   getTwilioClient,
+  generateAccessToken,
   initiateBridgedCall,
   generateConferenceTwiML,
   endCall

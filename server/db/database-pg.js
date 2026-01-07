@@ -25,9 +25,15 @@ async function initializeDatabase() {
       last_name TEXT NOT NULL,
       phone_number TEXT NOT NULL,
       codename TEXT UNIQUE NOT NULL,
+      answer_in_app BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  // Add answer_in_app column if it doesn't exist (for existing databases)
+  await database.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS answer_in_app BOOLEAN DEFAULT true
   `);
 
   // Create call_logs table for tracking calls
@@ -116,6 +122,18 @@ async function isCodenameAvailable(codename, excludeUserId = null) {
   return result.rows.length === 0;
 }
 
+async function updateUserAnswerInApp(id, answerInApp) {
+  const database = getDatabase();
+  const result = await database.query(
+    `UPDATE users
+     SET answer_in_app = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2
+     RETURNING *`,
+    [answerInApp, id]
+  );
+  return result.rows[0];
+}
+
 // Call log operations
 async function createCallLog(callerId, calleeId) {
   const database = getDatabase();
@@ -173,6 +191,7 @@ module.exports = {
   getUserByCodename,
   getAllUsersExcept,
   updateUser,
+  updateUserAnswerInApp,
   isCodenameAvailable,
   createCallLog,
   updateCallLog,

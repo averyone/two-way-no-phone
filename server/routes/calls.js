@@ -1,9 +1,14 @@
 const express = require('express');
 const twilio = require('twilio');
 const { getUserById, createCallLog, updateCallLog, getCallLogById } = require('../db/database-pg');
-const { initiateBridgedCall, generateConferenceTwiML } = require('../services/twilio');
+const { initiateBridgedCall, generateConferenceTwiML, generateAccessToken } = require('../services/twilio');
 
 const router = express.Router();
+
+// Generate a client identity from user id
+function getClientIdentity(userId) {
+  return `user_${userId}`;
+}
 
 // Middleware to check if user is authenticated and registered
 function isRegistered(req, res, next) {
@@ -45,6 +50,24 @@ function validateTwilioRequest(req, res, next) {
   next();
 }
 
+// Get Twilio access token for browser-based calling
+router.get('/token', isRegistered, (req, res) => {
+  try {
+    const identity = getClientIdentity(req.user.user.id);
+    const token = generateAccessToken(identity);
+    res.json({ token, identity });
+  } catch (error) {
+    console.error('Token generation error:', error);
+    if (error.message.includes('not configured')) {
+      return res.status(503).json({
+        error: 'Voice service not fully configured',
+        details: 'Twilio API credentials are missing for browser calling.'
+      });
+    }
+    res.status(500).json({ error: 'Failed to generate token' });
+  }
+});
+
 // Initiate a call to another user (with rate limiting)
 router.post('/initiate/:calleeId', (req, res, next) => {
   // Apply call-specific rate limiter
@@ -72,12 +95,21 @@ router.post('/initiate/:calleeId', (req, res, next) => {
     // Create a call log entry
     const callLogId = await createCallLog(callerId, calleeId);
 
-    // Get caller phone number
-    const callerPhone = req.user.user.phone_number;
-    const calleePhone = callee.phone_number;
+    // Build caller and callee objects with their preferences
+    const caller = {
+      phone: req.user.user.phone_number,
+      identity: getClientIdentity(callerId),
+      answerInApp: req.user.user.answer_in_app
+    };
+
+    const calleeData = {
+      phone: callee.phone_number,
+      identity: getClientIdentity(calleeId),
+      answerInApp: callee.answer_in_app
+    };
 
     // Initiate the bridged call via Twilio
-    const callDetails = await initiateBridgedCall(callerPhone, calleePhone, callLogId);
+    const callDetails = await initiateBridgedCall(caller, calleeData, callLogId);
 
     // Update call log with conference details
     await updateCallLog(callLogId, {
@@ -85,10 +117,14 @@ router.post('/initiate/:calleeId', (req, res, next) => {
       status: 'connecting'
     });
 
+    // Determine where each party will receive the call
+    const callerMethod = caller.answerInApp ? 'in browser' : 'on phone';
+    const calleeMethod = calleeData.answerInApp ? 'in browser' : 'on phone';
+
     res.json({
       success: true,
       callId: callLogId,
-      message: 'Call initiated. Both parties will receive a phone call shortly.'
+      message: `Call initiated. You'll receive the call ${callerMethod}, they'll receive it ${calleeMethod}.`
     });
   } catch (error) {
     console.error('Call initiation error:', error);
