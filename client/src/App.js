@@ -50,6 +50,13 @@ function App() {
     navigate('/phonebook');
   };
 
+  const handleUserUpdate = (updatedUser) => {
+    setAuthStatus(prev => ({
+      ...prev,
+      user: updatedUser
+    }));
+  };
+
   if (loading) {
     return (
       <div className="container">
@@ -98,7 +105,7 @@ function App() {
             ) : !authStatus.registered ? (
               <Navigate to="/register" replace />
             ) : (
-              <Phonebook user={authStatus.user} onLogout={handleLogout} />
+              <Phonebook user={authStatus.user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />
             )
           }
         />

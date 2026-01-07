@@ -107,7 +107,8 @@ router.get('/status', (req, res) => {
         firstName: req.user.user.first_name,
         lastName: req.user.user.last_name,
         phoneNumber: req.user.user.phone_number,
-        codename: req.user.user.codename
+        codename: req.user.user.codename,
+        answerInApp: req.user.user.answer_in_app
       }
     });
   } else {
