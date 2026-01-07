@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const path = require('path');
 
-const { initializeDatabase } = require('./db/database');
+const { initializeDatabase } = require('./db/database-pg');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const callRoutes = require('./routes/calls');
@@ -16,7 +16,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Initialize database
-initializeDatabase();
+initializeDatabase().catch(err => {
+  console.error('Database initialization failed:', err);
+  process.exit(1);
+});
 
 // Security middleware - helmet for security headers
 app.use(helmet({

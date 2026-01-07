@@ -1,7 +1,7 @@
 const express = require('express');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const { getUserByGoogleId, getUserById } = require('../db/database');
+const { getUserByGoogleId, getUserById } = require('../db/database-pg');
 
 const router = express.Router();
 
@@ -11,31 +11,35 @@ passport.use(new GoogleStrategy({
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.GOOGLE_CALLBACK_URL || '/auth/google/callback'
   },
-  (accessToken, refreshToken, profile, done) => {
-    // We don't create the user here - we just pass the Google profile data
-    // User creation happens in the registration step
-    const existingUser = getUserByGoogleId(profile.id);
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+      // We don't create the user here - we just pass the Google profile data
+      // User creation happens in the registration step
+      const existingUser = await getUserByGoogleId(profile.id);
 
-    if (existingUser) {
-      return done(null, { type: 'existing', user: existingUser });
+      if (existingUser) {
+        return done(null, { type: 'existing', user: existingUser });
+      }
+
+      // Extract data from Google profile
+      const googleData = {
+        googleId: profile.id,
+        email: profile.emails?.[0]?.value || '',
+        firstName: profile.name?.givenName || '',
+        lastName: profile.name?.familyName || '',
+        // Note: Google People API doesn't provide phone numbers in standard OAuth
+        // Phone number will need to be entered manually
+        phoneNumber: ''
+      };
+
+      // Generate default codename from email
+      const emailLocalPart = googleData.email.split('@')[0] || 'user';
+      googleData.defaultCodename = `${emailLocalPart}_phone`;
+
+      return done(null, { type: 'new', googleData });
+    } catch (error) {
+      return done(error);
     }
-
-    // Extract data from Google profile
-    const googleData = {
-      googleId: profile.id,
-      email: profile.emails?.[0]?.value || '',
-      firstName: profile.name?.givenName || '',
-      lastName: profile.name?.familyName || '',
-      // Note: Google People API doesn't provide phone numbers in standard OAuth
-      // Phone number will need to be entered manually
-      phoneNumber: ''
-    };
-
-    // Generate default codename from email
-    const emailLocalPart = googleData.email.split('@')[0] || 'user';
-    googleData.defaultCodename = `${emailLocalPart}_phone`;
-
-    return done(null, { type: 'new', googleData });
   }
 ));
 
@@ -49,12 +53,16 @@ passport.serializeUser((data, done) => {
 });
 
 // Deserialize user from session
-passport.deserializeUser((sessionData, done) => {
-  if (sessionData.type === 'existing') {
-    const user = getUserById(sessionData.userId);
-    done(null, user ? { type: 'existing', user } : null);
-  } else {
-    done(null, { type: 'new', googleData: sessionData.googleData });
+passport.deserializeUser(async (sessionData, done) => {
+  try {
+    if (sessionData.type === 'existing') {
+      const user = await getUserById(sessionData.userId);
+      done(null, user ? { type: 'existing', user } : null);
+    } else {
+      done(null, { type: 'new', googleData: sessionData.googleData });
+    }
+  } catch (error) {
+    done(error);
   }
 });
 

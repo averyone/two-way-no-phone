@@ -1,6 +1,6 @@
 const express = require('express');
 const twilio = require('twilio');
-const { getUserById, createCallLog, updateCallLog, getCallLogById } = require('../db/database');
+const { getUserById, createCallLog, updateCallLog, getCallLogById } = require('../db/database-pg');
 const { initiateBridgedCall, generateConferenceTwiML } = require('../services/twilio');
 
 const router = express.Router();
@@ -63,14 +63,14 @@ router.post('/initiate/:calleeId', (req, res, next) => {
   }
 
   // Get callee information
-  const callee = getUserById(calleeId);
+  const callee = await getUserById(calleeId);
   if (!callee) {
     return res.status(404).json({ error: 'User not found' });
   }
 
   try {
     // Create a call log entry
-    const callLogId = createCallLog(callerId, calleeId);
+    const callLogId = await createCallLog(callerId, calleeId);
 
     // Get caller phone number
     const callerPhone = req.user.user.phone_number;
@@ -80,7 +80,7 @@ router.post('/initiate/:calleeId', (req, res, next) => {
     const callDetails = await initiateBridgedCall(callerPhone, calleePhone, callLogId);
 
     // Update call log with conference details
-    updateCallLog(callLogId, {
+    await updateCallLog(callLogId, {
       twilioConferenceSid: callDetails.conferenceName,
       status: 'connecting'
     });
@@ -120,15 +120,15 @@ router.all('/twiml/conference', validateTwilioRequest, (req, res) => {
 });
 
 // Status callback from Twilio (POST from Twilio webhooks)
-router.post('/status/:callLogId', validateTwilioRequest, (req, res) => {
+router.post('/status/:callLogId', validateTwilioRequest, async (req, res) => {
   const { callLogId } = req.params;
-  const { CallStatus, CallSid } = req.body;
+  const { CallStatus } = req.body;
 
   // Log without sensitive data
   console.log(`Call ${callLogId} status update: ${CallStatus}`);
 
   try {
-    const callLog = getCallLogById(parseInt(callLogId, 10));
+    const callLog = await getCallLogById(parseInt(callLogId, 10));
     if (!callLog) {
       return res.status(404).send('Call log not found');
     }
@@ -161,7 +161,7 @@ router.post('/status/:callLogId', validateTwilioRequest, (req, res) => {
       updates.endedAt = new Date().toISOString();
     }
 
-    updateCallLog(parseInt(callLogId, 10), updates);
+    await updateCallLog(parseInt(callLogId, 10), updates);
     res.sendStatus(200);
   } catch (error) {
     console.error('Status callback error:', error);
@@ -170,12 +170,12 @@ router.post('/status/:callLogId', validateTwilioRequest, (req, res) => {
 });
 
 // Get call status
-router.get('/status/:callLogId', isRegistered, (req, res) => {
+router.get('/status/:callLogId', isRegistered, async (req, res) => {
   const { callLogId } = req.params;
   const userId = req.user.user.id;
 
   try {
-    const callLog = getCallLogById(parseInt(callLogId, 10));
+    const callLog = await getCallLogById(parseInt(callLogId, 10));
     if (!callLog) {
       return res.status(404).json({ error: 'Call not found' });
     }
