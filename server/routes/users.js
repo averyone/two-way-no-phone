@@ -5,7 +5,7 @@ const {
   updateUser,
   isCodenameAvailable,
   getUserByGoogleId
-} = require('../db/database');
+} = require('../db/database-pg');
 
 const router = express.Router();
 
@@ -26,7 +26,7 @@ function isRegistered(req, res, next) {
 }
 
 // Register a new user (complete registration after Google OAuth)
-router.post('/register', isAuthenticated, (req, res) => {
+router.post('/register', isAuthenticated, async (req, res) => {
   if (req.user.type === 'existing') {
     return res.status(400).json({ error: 'User already registered' });
   }
@@ -46,12 +46,13 @@ router.post('/register', isAuthenticated, (req, res) => {
   }
 
   // Check if codename is available
-  if (!isCodenameAvailable(codename)) {
+  const available = await isCodenameAvailable(codename);
+  if (!available) {
     return res.status(400).json({ error: 'Codename is already taken' });
   }
 
   try {
-    const userId = createUser({
+    const userId = await createUser({
       googleId: googleData.googleId,
       email: googleData.email,
       firstName: googleData.firstName,
@@ -61,7 +62,7 @@ router.post('/register', isAuthenticated, (req, res) => {
     });
 
     // Update session to reflect registered user
-    const user = getUserByGoogleId(googleData.googleId);
+    const user = await getUserByGoogleId(googleData.googleId);
     req.user.type = 'existing';
     req.user.user = user;
 
@@ -84,7 +85,7 @@ router.post('/register', isAuthenticated, (req, res) => {
     });
   } catch (error) {
     console.error('Registration error:', error);
-    if (error.message.includes('UNIQUE constraint')) {
+    if (error.message.includes('unique') || error.code === '23505') {
       return res.status(400).json({ error: 'Email or codename already exists' });
     }
     res.status(500).json({ error: 'Registration failed' });
@@ -92,9 +93,9 @@ router.post('/register', isAuthenticated, (req, res) => {
 });
 
 // Get all users (phonebook) - only for registered users
-router.get('/phonebook', isAuthenticated, isRegistered, (req, res) => {
+router.get('/phonebook', isAuthenticated, isRegistered, async (req, res) => {
   try {
-    const users = getAllUsersExcept(req.user.user.id);
+    const users = await getAllUsersExcept(req.user.user.id);
     res.json({
       users: users.map(u => ({
         id: u.id,
@@ -108,15 +109,15 @@ router.get('/phonebook', isAuthenticated, isRegistered, (req, res) => {
 });
 
 // Check if codename is available
-router.get('/check-codename/:codename', isAuthenticated, (req, res) => {
+router.get('/check-codename/:codename', isAuthenticated, async (req, res) => {
   const { codename } = req.params;
   const excludeUserId = req.user.type === 'existing' ? req.user.user.id : null;
-  const available = isCodenameAvailable(codename, excludeUserId);
+  const available = await isCodenameAvailable(codename, excludeUserId);
   res.json({ available });
 });
 
 // Update user profile (phone number and codename)
-router.put('/profile', isAuthenticated, isRegistered, (req, res) => {
+router.put('/profile', isAuthenticated, isRegistered, async (req, res) => {
   const { phoneNumber, codename } = req.body;
   const userId = req.user.user.id;
 
@@ -132,12 +133,13 @@ router.put('/profile', isAuthenticated, isRegistered, (req, res) => {
   }
 
   // Check if codename is available (excluding current user)
-  if (!isCodenameAvailable(codename, userId)) {
+  const available = await isCodenameAvailable(codename, userId);
+  if (!available) {
     return res.status(400).json({ error: 'Codename is already taken' });
   }
 
   try {
-    updateUser(userId, {
+    await updateUser(userId, {
       phoneNumber: phoneNumber.replace(/[\s\-\(\)]/g, ''),
       codename
     });

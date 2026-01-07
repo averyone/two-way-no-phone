@@ -70,9 +70,11 @@ Requires Vite environment variables:
 - `server/db/database.js` - SQLite operations using better-sqlite3
 - `server/services/twilio.js` - Twilio conference call logic
 
-**Database:** SQLite with better-sqlite3 (`data/app.db`)
+**Database:** PostgreSQL (production) or SQLite (local development)
 - `users` table: Google ID, email, name, phone number, codename
 - `call_logs` table: Tracks calls between users with Twilio conference SIDs
+- Uses `server/db/database-pg.js` for PostgreSQL (async operations)
+- Legacy `server/db/database.js` available for SQLite (sync operations)
 
 **Call Flow:**
 1. User A clicks "Call" for User B's codename
@@ -113,10 +115,18 @@ Requires Vite environment variables:
 ## Key Implementation Details
 
 ### Phone System Database Layer
-All database operations use synchronous better-sqlite3 API. No need for `await` when calling functions from `server/db/database.js`. Example:
+Database operations are **asynchronous** and use PostgreSQL via the `pg` library. All database functions return Promises and must be awaited:
 ```javascript
-const user = getUserById(userId);  // Not: await getUserById(userId)
+const user = await getUserById(userId);  // Must use await
 ```
+
+**Local Development:**
+- Set `DATABASE_URL` environment variable to PostgreSQL connection string
+- Or use SQLite by switching imports to `./db/database.js` (sync API)
+
+**Production (Render):**
+- Uses PostgreSQL (free tier included in `render.yaml`)
+- `DATABASE_URL` automatically provided by Render
 
 ### Authentication Flow (Phone System)
 Passport serialization supports two states:
@@ -163,10 +173,12 @@ Check `req.user.type` to determine state.
 - Add UI controls in `src/main.ts`
 
 ### Database Migrations (Phone System)
-SQLite schema changes require manual migration:
-1. Modify table definitions in `server/db/database.js` `initializeDatabase()`
-2. Test with fresh database (delete `data/app.db`)
-3. For production, write SQL migration script
+PostgreSQL schema changes:
+1. Modify table definitions in `server/db/database-pg.js` `initializeDatabase()`
+2. For production, create SQL migration files and run them manually
+3. Current schema is created automatically on first app start via `CREATE TABLE IF NOT EXISTS`
+
+**Note:** The `initializeDatabase()` function runs on server startup and creates tables if they don't exist.
 
 ### Supabase Schema Changes (WebRTC System)
 ```bash
@@ -194,4 +206,4 @@ supabase db push
 - CORS configured for `CLIENT_URL` only
 - Twilio webhooks must be publicly accessible (no localhost)
 - WebRTC requires HTTPS for `getUserMedia()` (except localhost)
-- SQLite database uses WAL mode for concurrent access
+- PostgreSQL database uses connection pooling for concurrent access
