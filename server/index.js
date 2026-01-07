@@ -15,6 +15,11 @@ const callRoutes = require('./routes/calls');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy - required for secure cookies behind reverse proxy (Render, Heroku, etc.)
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Initialize database
 initializeDatabase().catch(err => {
   console.error('Database initialization failed:', err);
